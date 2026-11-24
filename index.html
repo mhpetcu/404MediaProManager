@@ -1860,6 +1860,8 @@ body:not(.dark) .signature-floater {
         <select class="field" id="boardPriority"><option value="">Toate prioritățile</option></select>
         <select class="field" id="boardSort">
           <option value="deadline-asc">Deadline apropiat</option>
+          <option value="created-desc">Introduse recent</option>
+          <option value="created-asc">Introduse vechi</option>
           <option value="priority-desc">Prioritate mare</option>
           <option value="value-desc">Valoare mare</option>
           <option value="time-desc">Timp lucrat</option>
@@ -2728,7 +2730,7 @@ function renderStats() {
   const tracked = currentMonthTrackedSeconds() / 3600;
   const activeClients = db.clients.filter(c => db.tasks.some(t => t.clientId === c.id && !['Finalizat','Arhivat'].includes(t.status))).length;
   const balance = db.tasks
-    .filter(t => t.status !== 'Arhivat')
+    .filter(t => t.status !== 'Arhivat' && (!filterClient.value || t.clientId === filterClient.value))
     .reduce((sum,t) => sum + taskBillableRon(t), 0);
   stats.innerHTML = `
     <div class="stat"><span>Taskuri active</span><strong>${active}</strong></div>
@@ -3647,9 +3649,17 @@ function printInvoice(id) {
   const footerPng = safeFooterPng(issuer.footerPng);
   const footerImage = footerPng ? `<img src="${footerPng}" alt="Element grafic subsol">` : '';
   const rows = invoice.lines.map((line, index) => `<tr><td>${index + 1}</td><td><strong>${escapeHtml(line.description)}</strong></td><td>${Number(line.quantity).toLocaleString('ro-RO')}</td><td>${escapeHtml(line.unit)}</td><td>${money(line.unitPrice, invoice.currency)}</td><td>${Number(line.vatRate || 0)}%</td><td>${money(Number(line.quantity) * Number(line.unitPrice) * (1 + Number(line.vatRate || 0) / 100), invoice.currency)}</td></tr>`).join('');
-  const timesheetRows = (invoice.timesheet?.entries || []).map(entry => `<tr><td>${formatDateTime(entry.date)}</td><td>${escapeHtml(entry.client || '—')}</td><td>${escapeHtml(entry.project || '—')}</td><td>${escapeHtml(entry.task || '—')}</td><td>${secondsToHm(entry.seconds)}</td></tr>`).join('');
-  const timesheetTotal = (invoice.timesheet?.entries || []).reduce((sum, entry) => sum + Number(entry.seconds || 0), 0);
-  const timesheetAttachment = timesheetRows ? `<section class="timesheet-page"><h1>DESFĂȘURĂTOR ACTIVITATE</h1><div class="muted period">Anexă la factura ${escapeHtml(invoice.series)}-${escapeHtml(invoice.number)} · ${formatDate(invoice.timesheet.from)} – ${formatDate(invoice.timesheet.to)}</div><table><thead><tr><th>Dată</th><th>Client</th><th>Proiect</th><th>Activitate</th><th>Timp</th></tr></thead><tbody>${timesheetRows}</tbody></table><div class="timesheet-total">Total: ${secondsToHm(timesheetTotal)}</div></section>` : '';
+  const timesheetEntries = invoice.timesheet?.entries || [];
+  const timesheetByTask = new Map();
+  timesheetEntries.forEach(entry => {
+    const key = entry.taskId || `${entry.clientId || entry.client || ''}|${entry.projectId || entry.project || ''}|${entry.task || ''}`;
+    const current = timesheetByTask.get(key) || { client: entry.client || '—', project: entry.project || '—', task: entry.task || '—', seconds: 0 };
+    current.seconds += Number(entry.seconds || 0);
+    timesheetByTask.set(key, current);
+  });
+  const timesheetRows = [...timesheetByTask.values()].map(entry => `<tr><td>${escapeHtml(entry.client)}</td><td>${escapeHtml(entry.project)}</td><td>${escapeHtml(entry.task)}</td><td>${secondsToHm(entry.seconds)}</td></tr>`).join('');
+  const timesheetTotal = timesheetEntries.reduce((sum, entry) => sum + Number(entry.seconds || 0), 0);
+  const timesheetAttachment = timesheetRows ? `<section class="timesheet-page"><h1>DESFĂȘURĂTOR ACTIVITATE</h1><div class="muted period">Anexă la factura ${escapeHtml(invoice.series)}-${escapeHtml(invoice.number)} · ${formatDate(invoice.timesheet.from)} – ${formatDate(invoice.timesheet.to)}</div><table><thead><tr><th>Client</th><th>Proiect</th><th>Task / activitate</th><th>Timp cumulat</th></tr></thead><tbody>${timesheetRows}</tbody></table><div class="timesheet-total">Total: ${secondsToHm(timesheetTotal)}</div></section>` : '';
   printWindow.document.write(`<!doctype html><html lang="ro"><head><meta charset="utf-8"><title>Factura ${escapeHtml(invoice.series)}-${escapeHtml(invoice.number)}</title><style>
     @page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;padding:16mm 16mm 38mm;font:14px Arial,sans-serif;color:#152033;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}h1{font-size:30px;margin:0}h2{font-size:16px;margin:0 0 10px}.head{display:flex;justify-content:space-between;gap:30px;padding-bottom:24px;border-bottom:3px solid #111827}.number{text-align:right}.number strong{display:block;font-size:18px;margin-top:8px}.parties{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin:30px 0}.box{line-height:1.65}.muted{color:#64748b}table{width:100%;border-collapse:collapse;margin-top:25px}th,td{padding:11px 9px;border-bottom:1px solid #dbe2ea;text-align:left}th{font-size:10px;text-transform:uppercase;color:#64748b}.totals{width:330px;margin:24px 0 0 auto}.total-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #dbe2ea}.grand{font-size:18px;font-weight:800;border-bottom:0}.notes{margin-top:38px;padding:16px;background:#f5f7fa;border-radius:10px;white-space:pre-wrap}.foot{position:fixed;left:16mm;right:16mm;bottom:6mm;color:#64748b;font-size:10px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:25px}.foot img{display:block;max-width:32.5%;max-height:5.85mm;object-fit:contain}.timesheet-page{page-break-before:always;padding-top:16mm}.timesheet-page .period{margin-top:8px}.timesheet-total{text-align:right;margin-top:20px;font-size:18px;font-weight:700}</style></head><body>
     <div class="head"><div><h1>FACTURĂ</h1><div class="muted">Document emis electronic</div></div><div class="number"><span>Seria / numărul</span><strong>${escapeHtml(invoice.series)}-${escapeHtml(invoice.number)}</strong><div>Data: ${formatDate(invoice.issueDate)}</div><div>Scadență: ${formatDate(invoice.dueDate)}</div></div></div>
@@ -3658,6 +3668,9 @@ function printInvoice(id) {
     <table><thead><tr><th>#</th><th>Produs / serviciu</th><th>Cant.</th><th>UM</th><th>Preț</th><th>TVA</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="totals"><div class="total-row"><span>Subtotal</span><strong>${money(invoiceSubtotal(invoice), invoice.currency)}</strong></div><div class="total-row"><span>TVA</span><strong>${money(invoiceVat(invoice), invoice.currency)}</strong></div><div class="total-row grand"><span>Total</span><strong>${money(invoiceTotal(invoice), invoice.currency)}</strong></div></div>
     ${invoice.notes ? `<div class="notes"><strong>Observații</strong><br>${escapeHtml(invoice.notes)}</div>` : ''}${timesheetAttachment}<div class="foot">${footerImage}<span>Generată local în 404 MediaPro Manager - ©Mihai Petcu 2026. Acest PDF nu confirmă transmiterea sau validarea în sistemul RO e-Factura.</span></div><script>window.onload=()=>setTimeout(()=>window.print(),250)<\/script></body></html>`);
+  const paginationStyles = printWindow.document.createElement('style');
+  paginationStyles.textContent = '@page{size:A4;margin:16mm 16mm 38mm}body{padding:0}tr{break-inside:avoid;page-break-inside:avoid}';
+  printWindow.document.head.appendChild(paginationStyles);
   printWindow.document.close();
 }
 
